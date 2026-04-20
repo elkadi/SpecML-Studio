@@ -3,4 +3,4 @@ pandas>=2.2
 numpy>=1.26
 scikit-learn>=1.4
 matplotlib>=3.8
-spec4ml_py
+git+https://github.com/elkadi/spec4ml_py.git
