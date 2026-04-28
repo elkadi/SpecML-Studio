@@ -91,6 +91,60 @@ class PipelineSummary:
 
 
 @dataclass(slots=True)
+class SelectedPipelineSummary:
+    candidate_name: str
+    preprocessing_name: str
+    selected_model: str
+    validation_score: float
+    model_info: dict[str, Any]
+
+
+@dataclass(slots=True)
+class SearchCandidate:
+    name: str
+    dataframe: pd.DataFrame
+
+
+@dataclass(slots=True)
+class SearchRequest:
+    task_type: TaskType
+    target_column: str
+    sample_id_column: str
+    spectral_start_index: int
+    candidates: list[SearchCandidate]
+    scoring: str
+    cv_folds: int
+    max_time_mins: int
+    generations: int
+    population_size: int
+    n_jobs: int
+    train_sample_ids: set[str] | None = None
+
+
+@dataclass(slots=True)
+class SearchCandidateResult:
+    target: str
+    task_type: TaskType
+    preprocessing_name: str
+    top_model: str
+    validation_score: float
+    model_info: dict[str, Any]
+    training_time_seconds: float
+    n_evaluated_pipelines: int
+    fitted_model: Any = None
+    preprocessed_dataframe: pd.DataFrame | None = None
+    exported_pipeline_code: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class SearchResult:
+    results: list[SearchCandidateResult]
+    selected: SearchCandidateResult | None
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class EvaluationRequest:
     mode: EvaluationMode
     dataset: DatasetPayload

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import tempfile
+import time
 from dataclasses import dataclass
+from io import BytesIO
+from pathlib import Path
 from typing import Any, Optional
 
+import joblib
 import numpy as np
 import pandas as pd
-from sklearn.base import ClassifierMixin, RegressorMixin
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
@@ -20,19 +24,20 @@ from sklearn.metrics import (
     r2_score,
     recall_score,
 )
-from sklearn.model_selection import LeaveOneOut
-from sklearn.svm import SVC
+from sklearn.model_selection import KFold, LeaveOneOut
 
 from spec4ml_studio.adapters.base import Spec4MLBackend
-from spec4ml_studio.domain.models import EvaluationMode, EvaluationRequest, FeatureImportanceRequest, PipelineSummary, PreprocessingStep, TaskType
+from spec4ml_studio.domain.models import (
+    EvaluationMode,
+    EvaluationRequest,
+    FeatureImportanceRequest,
+    PipelineSummary,
+    SearchCandidateResult,
+    SearchRequest,
+    TaskType,
+)
 from spec4ml_studio.domain.results import EvaluationResult, FeatureImportanceResult, PredictionTable
 from spec4ml_studio.services.artifact_service import ArtifactService
-
-try:  # optional
-    from tpot import TPOTClassifier, TPOTRegressor
-except Exception:  # pragma: no cover
-    TPOTClassifier = None
-    TPOTRegressor = None
 
 
 @dataclass(slots=True)
@@ -71,8 +76,8 @@ class Spec4MLPyBackend(Spec4MLBackend):
 
         df = dataset.dataframe
         cfg = dataset.config
-
         issues: list[str] = []
+
         duplicate_sample_ids = 0
         if cfg.sample_id_column and cfg.sample_id_column in df.columns:
             duplicate_sample_ids = int(df[cfg.sample_id_column].duplicated().sum())
@@ -87,12 +92,11 @@ class Spec4MLPyBackend(Spec4MLBackend):
             target_is_numeric = target_series.notna().all()
 
         spectral_df = df.iloc[:, cfg.spectral_start_index :]
-        numeric_cols = 0
-        for col in spectral_df.columns:
-            if pd.to_numeric(spectral_df[col], errors="coerce").notna().all():
-                numeric_cols += 1
-        spectral_ratio = numeric_cols / max(len(spectral_df.columns), 1)
-        if spectral_ratio < 1.0:
+        numeric_ratio = float(
+            sum(pd.to_numeric(spectral_df[c], errors="coerce").notna().all() for c in spectral_df.columns)
+            / max(len(spectral_df.columns), 1)
+        )
+        if numeric_ratio < 1.0:
             issues.append("Some spectral columns contain missing or non-numeric values.")
 
         missing_values = int(spectral_df.isna().sum().sum())
@@ -105,7 +109,7 @@ class Spec4MLPyBackend(Spec4MLBackend):
             missing_values=missing_values,
             duplicate_sample_ids=duplicate_sample_ids,
             target_is_numeric=target_is_numeric,
-            spectral_columns_numeric_ratio=spectral_ratio,
+            spectral_columns_numeric_ratio=numeric_ratio,
             issues=issues,
         )
 
@@ -115,19 +119,18 @@ class Spec4MLPyBackend(Spec4MLBackend):
 
         y_true: list[Any] = []
         y_pred: list[Any] = []
-        loo = LeaveOneOut()
         x = data.x_train.to_numpy()
         y = data.y_train.to_numpy()
+        loo = LeaveOneOut()
         for tr_idx, te_idx in loo.split(x):
             fold_model = self._clone_model(model)
             fold_model.fit(x[tr_idx], y[tr_idx])
-            pred = fold_model.predict(x[te_idx])[0]
-            y_pred.append(pred)
+            y_pred.append(fold_model.predict(x[te_idx])[0])
             y_true.append(y[te_idx][0])
 
-        trained_model = self._clone_model(model)
-        trained_model.fit(data.x_train, data.y_train)
-        return self._build_result(request, np.array(y_true), np.array(y_pred), trained_model, request.mode)
+        trained = self._clone_model(model)
+        trained.fit(data.x_train, data.y_train)
+        return self._build_result(request, np.array(y_true), np.array(y_pred), trained, request.mode)
 
     def run_external_test_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
         if request.test_dataset is None:
@@ -140,55 +143,213 @@ class Spec4MLPyBackend(Spec4MLBackend):
 
     def run_ensemble_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
         data = self._to_xy(request.dataset)
-        model = (
-            RandomForestRegressor(n_estimators=150, random_state=42)
-            if request.dataset.task_type is TaskType.REGRESSION
-            else RandomForestClassifier(n_estimators=150, random_state=42)
-        )
+        model = RandomForestRegressor(n_estimators=150, random_state=42) if request.dataset.task_type is TaskType.REGRESSION else RandomForestClassifier(n_estimators=150, random_state=42)
         model.fit(data.x_train, data.y_train)
         preds = model.predict(data.x_train)
         return self._build_result(request, data.y_train.to_numpy(), np.array(preds), model, request.mode)
 
     def run_tpot_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
-        data = self._to_xy(request.dataset)
         warnings = self._base_warnings()
+        data = self._to_xy(request.dataset)
         if request.dataset.task_type is TaskType.REGRESSION:
-            if TPOTRegressor is None:
-                warnings.append("TPOT unavailable; using RandomForestRegressor fallback.")
-                model: RegressorMixin = RandomForestRegressor(n_estimators=100, random_state=42)
-                model.fit(data.x_train, data.y_train)
-                preds = model.predict(data.x_train)
-                return self._build_result(request, data.y_train.to_numpy(), np.array(preds), model, request.mode, warnings)
-            model = TPOTRegressor(generations=2, population_size=8, cv=3, verbosity=0, n_jobs=1, random_state=42)
+            candidate = self.run_tpot_regression_search(
+                SearchRequest(
+                    task_type=TaskType.REGRESSION,
+                    target_column=request.dataset.config.target_column,
+                    sample_id_column=request.dataset.config.sample_id_column or "sample_id",
+                    spectral_start_index=request.dataset.config.spectral_start_index,
+                    candidates=[],
+                    scoring="neg_mean_absolute_error",
+                    cv_folds=3,
+                    max_time_mins=3,
+                    generations=2,
+                    population_size=8,
+                    n_jobs=1,
+                ),
+                request.dataset.dataframe,
+                "active_preprocessing",
+            )
         else:
-            if TPOTClassifier is None:
-                warnings.append("TPOT unavailable; using RandomForestClassifier fallback.")
-                model = RandomForestClassifier(n_estimators=100, random_state=42)
-                model.fit(data.x_train, data.y_train)
-                preds = model.predict(data.x_train)
-                return self._build_result(request, data.y_train.to_numpy(), np.array(preds), model, request.mode, warnings)
-            model = TPOTClassifier(generations=2, population_size=8, cv=3, verbosity=0, n_jobs=1, random_state=42)
+            candidate = self.run_tpot_classification_search(
+                SearchRequest(
+                    task_type=TaskType.CLASSIFICATION,
+                    target_column=request.dataset.config.target_column,
+                    sample_id_column=request.dataset.config.sample_id_column or "sample_id",
+                    spectral_start_index=request.dataset.config.spectral_start_index,
+                    candidates=[],
+                    scoring="balanced_accuracy",
+                    cv_folds=3,
+                    max_time_mins=3,
+                    generations=2,
+                    population_size=8,
+                    n_jobs=1,
+                ),
+                request.dataset.dataframe,
+                "active_preprocessing",
+            )
 
-        model.fit(data.x_train, data.y_train)
-        preds = model.predict(data.x_train)
-        return self._build_result(request, data.y_train.to_numpy(), np.array(preds), model, request.mode, warnings)
+        model = candidate.fitted_model if candidate.fitted_model is not None else self._default_model(request.dataset.task_type)
+        if candidate.fitted_model is None:
+            model.fit(data.x_train, data.y_train)
+            preds = model.predict(data.x_train)
+        else:
+            preds = candidate.fitted_model.predict(data.x_train)
+        warnings.extend(candidate.warnings)
+        result = self._build_result(request, data.y_train.to_numpy(), np.array(preds), model, request.mode, warnings)
+        return result
+
+    def run_tpot_regression_search(self, request: SearchRequest, candidate_df: pd.DataFrame, candidate_name: str) -> SearchCandidateResult:
+        return self._run_tpot_search(request, candidate_df, candidate_name)
+
+    def run_tpot_classification_search(self, request: SearchRequest, candidate_df: pd.DataFrame, candidate_name: str) -> SearchCandidateResult:
+        return self._run_tpot_search(request, candidate_df, candidate_name)
+
+    def export_selected_pipeline(self, selected_result: SearchCandidateResult) -> str | None:
+        return selected_result.exported_pipeline_code
+
+    def serialize_selected_model(self, selected_result: SearchCandidateResult) -> bytes | None:
+        if selected_result.fitted_model is None:
+            return None
+        try:
+            buffer = BytesIO()
+            joblib.dump(selected_result.fitted_model, buffer)
+            return buffer.getvalue()
+        except Exception:
+            return None
+
+    def _run_tpot_search(self, request: SearchRequest, candidate_df: pd.DataFrame, candidate_name: str) -> SearchCandidateResult:
+        start = time.time()
+        warnings = self._base_warnings()
+
+        df = candidate_df.copy()
+        if request.train_sample_ids is not None:
+            df = df[df[request.sample_id_column].astype(str).isin(request.train_sample_ids)]
+
+        x = df.iloc[:, request.spectral_start_index :].apply(pd.to_numeric, errors="coerce").dropna()
+        y = df.loc[x.index, request.target_column]
+        if request.task_type is TaskType.REGRESSION:
+            y = pd.to_numeric(y, errors="coerce")
+            valid = y.notna()
+            x, y = x.loc[valid], y.loc[valid]
+        else:
+            y = y.astype(str)
+
+        try:
+            if request.task_type is TaskType.REGRESSION:
+                from tpot import TPOTRegressor  # lazy import
+
+                tpot = TPOTRegressor(
+                    max_time_mins=request.max_time_mins,
+                    scoring=request.scoring,
+                    cv=KFold(n_splits=request.cv_folds, shuffle=True, random_state=11),
+                    random_state=11,
+                    n_jobs=request.n_jobs,
+                    population_size=request.population_size,
+                    generations=request.generations,
+                    verbosity=0,
+                )
+            else:
+                from tpot import TPOTClassifier  # lazy import
+
+                tpot = TPOTClassifier(
+                    max_time_mins=request.max_time_mins,
+                    scoring=request.scoring,
+                    cv=KFold(n_splits=request.cv_folds, shuffle=True, random_state=11),
+                    random_state=11,
+                    n_jobs=request.n_jobs,
+                    population_size=request.population_size,
+                    generations=request.generations,
+                    verbosity=0,
+                )
+            tpot.fit(x, y)
+            models = list(tpot.evaluated_individuals_.items())
+            rows = []
+            for model_name, model_info in models:
+                rows.append(
+                    {
+                        "model": model_name,
+                        "cv_score": model_info.get("internal_cv_score", float("-inf")),
+                        "model_info": model_info,
+                    }
+                )
+            scores = pd.DataFrame(rows).sort_values("cv_score", ascending=False)
+            top = scores.iloc[0]
+
+            export_code = None
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_path = Path(tmp) / "selected_pipeline.py"
+                    tpot.export(str(out_path))
+                    export_code = out_path.read_text(encoding="utf-8")
+            except Exception:
+                warnings.append("Unable to export TPOT pipeline code.")
+
+            elapsed = time.time() - start
+            return SearchCandidateResult(
+                target=request.target_column,
+                task_type=request.task_type,
+                preprocessing_name=candidate_name,
+                top_model=str(top["model"]),
+                validation_score=float(top["cv_score"]),
+                model_info=dict(top["model_info"]),
+                training_time_seconds=elapsed,
+                n_evaluated_pipelines=len(scores),
+                fitted_model=getattr(tpot, "fitted_pipeline_", None),
+                preprocessed_dataframe=df,
+                exported_pipeline_code=export_code,
+                warnings=warnings,
+            )
+        except Exception as exc:
+            warnings.append(f"TPOT unavailable or failed ({exc}); using sklearn fallback search.")
+            return self._fallback_search(request, x, y, candidate_name, start, warnings, df)
+
+    def _fallback_search(
+        self,
+        request: SearchRequest,
+        x: pd.DataFrame,
+        y: pd.Series,
+        candidate_name: str,
+        start_time: float,
+        warnings: list[str],
+        original_df: pd.DataFrame,
+    ) -> SearchCandidateResult:
+        if request.task_type is TaskType.REGRESSION:
+            model = RandomForestRegressor(n_estimators=120, random_state=11)
+            scoring = "neg_mean_absolute_error"
+        else:
+            model = RandomForestClassifier(n_estimators=120, random_state=11)
+            scoring = "balanced_accuracy"
+
+        model.fit(x, y)
+        score = float(model.score(x, y))
+        return SearchCandidateResult(
+            target=request.target_column,
+            task_type=request.task_type,
+            preprocessing_name=candidate_name,
+            top_model=model.__class__.__name__,
+            validation_score=score,
+            model_info={"fallback": True, "scoring": scoring, "params": model.get_params()},
+            training_time_seconds=time.time() - start_time,
+            n_evaluated_pipelines=1,
+            fitted_model=model,
+            preprocessed_dataframe=original_df,
+            exported_pipeline_code=None,
+            warnings=warnings,
+        )
 
     def run_feature_block_importance(self, request: FeatureImportanceRequest) -> FeatureImportanceResult:
         data = self._to_xy(request.dataset)
         model = RandomForestRegressor(n_estimators=200, random_state=42)
         y = pd.to_numeric(data.y_train, errors="coerce") if request.dataset.task_type is TaskType.REGRESSION else pd.factorize(data.y_train)[0]
         model.fit(data.x_train, y)
-
-        n_blocks = max(request.n_blocks, 1)
-        edges = np.linspace(0, data.x_train.shape[1], n_blocks + 1, dtype=int)
-        rows: list[dict[str, Any]] = []
+        edges = np.linspace(0, data.x_train.shape[1], max(request.n_blocks, 1) + 1, dtype=int)
+        rows = []
         importances = model.feature_importances_
-        for i in range(n_blocks):
-            start, end = edges[i], edges[i + 1]
-            if end <= start:
+        for i in range(len(edges) - 1):
+            s, e = edges[i], edges[i + 1]
+            if e <= s:
                 continue
-            rows.append({"block": f"block_{i+1}", "start_col": int(start), "end_col": int(end - 1), "importance": float(importances[start:end].mean())})
-
+            rows.append({"block": f"block_{i+1}", "start_col": int(s), "end_col": int(e - 1), "importance": float(importances[s:e].mean())})
         return FeatureImportanceResult(
             importance_table=pd.DataFrame(rows).sort_values("importance", ascending=False),
             backend_used=self.name,
@@ -218,20 +379,20 @@ class Spec4MLPyBackend(Spec4MLBackend):
             confusion_df = None
             class_report_df = None
         else:
-            y_true_s = pd.Series(y_true).astype(str)
-            y_pred_s = pd.Series(y_pred).astype(str)
-            labels = sorted(set(y_true_s.unique()) | set(y_pred_s.unique()))
+            yt = pd.Series(y_true).astype(str)
+            yp = pd.Series(y_pred).astype(str)
+            labels = sorted(set(yt.unique()) | set(yp.unique()))
             metrics_dict = {
-                "accuracy": float(accuracy_score(y_true_s, y_pred_s)),
-                "balanced_accuracy": float(balanced_accuracy_score(y_true_s, y_pred_s)),
-                "precision_macro": float(precision_score(y_true_s, y_pred_s, average="macro", zero_division=0)),
-                "recall_macro": float(recall_score(y_true_s, y_pred_s, average="macro", zero_division=0)),
-                "f1_macro": float(f1_score(y_true_s, y_pred_s, average="macro", zero_division=0)),
+                "accuracy": float(accuracy_score(yt, yp)),
+                "balanced_accuracy": float(balanced_accuracy_score(yt, yp)),
+                "precision_macro": float(precision_score(yt, yp, average="macro", zero_division=0)),
+                "recall_macro": float(recall_score(yt, yp, average="macro", zero_division=0)),
+                "f1_macro": float(f1_score(yt, yp, average="macro", zero_division=0)),
             }
             metrics_df = pd.DataFrame({"metric": list(metrics_dict.keys()), "value": list(metrics_dict.values())})
-            pred_df = pd.DataFrame({"y_true": y_true_s, "y_pred": y_pred_s})
-            confusion_df = pd.DataFrame(confusion_matrix(y_true_s, y_pred_s, labels=labels), index=labels, columns=labels)
-            class_report_df = pd.DataFrame(classification_report(y_true_s, y_pred_s, output_dict=True, zero_division=0)).transpose()
+            pred_df = pd.DataFrame({"y_true": yt, "y_pred": yp})
+            confusion_df = pd.DataFrame(confusion_matrix(yt, yp, labels=labels), index=labels, columns=labels)
+            class_report_df = pd.DataFrame(classification_report(yt, yp, output_dict=True, zero_division=0)).transpose()
 
         summary = PipelineSummary(
             task_type=request.dataset.task_type,
@@ -271,42 +432,33 @@ class Spec4MLPyBackend(Spec4MLBackend):
         )
 
     @staticmethod
-    def _clone_model(model):
-        params = model.get_params() if hasattr(model, "get_params") else {}
-        return model.__class__(**params)
+    def _default_model(task_type: TaskType):
+        return LinearRegression() if task_type is TaskType.REGRESSION else LogisticRegression(max_iter=1000)
 
     @staticmethod
-    def _default_model(task_type: TaskType):
-        if task_type is TaskType.REGRESSION:
-            return LinearRegression()
-        return LogisticRegression(max_iter=1000)
+    def _clone_model(model):
+        return model.__class__(**(model.get_params() if hasattr(model, "get_params") else {}))
 
     @staticmethod
     def _encode_labels_if_needed(task_type: TaskType, y: pd.Series) -> pd.Series:
-        if task_type is TaskType.CLASSIFICATION:
-            return y.astype(str)
-        return pd.to_numeric(y, errors="raise")
+        return y.astype(str) if task_type is TaskType.CLASSIFICATION else pd.to_numeric(y, errors="raise")
 
     def _to_xy(self, payload) -> _EvalData:
         df = payload.dataframe.copy()
-        cfg = payload.config
-        y = self._encode_labels_if_needed(payload.task_type, df[cfg.target_column])
-        x = df.iloc[:, cfg.spectral_start_index :].apply(pd.to_numeric, errors="raise")
+        y = self._encode_labels_if_needed(payload.task_type, df[payload.config.target_column])
+        x = df.iloc[:, payload.config.spectral_start_index :].apply(pd.to_numeric, errors="raise")
         return _EvalData(x_train=x, y_train=y, x_test=x, y_test=y)
 
     def _prepare_train_test(self, train_payload, test_payload) -> _EvalData:
-        train = self._to_xy(train_payload)
-        test = self._to_xy(test_payload)
-        if train.x_train.shape[1] != test.x_train.shape[1]:
+        tr = self._to_xy(train_payload)
+        te = self._to_xy(test_payload)
+        if tr.x_train.shape[1] != te.x_train.shape[1]:
             raise ValueError("Train and test spectral feature counts must match.")
-        return _EvalData(train.x_train, train.y_train, test.x_train, test.y_train)
+        return _EvalData(tr.x_train, tr.y_train, te.x_train, te.y_train)
 
     def _base_warnings(self) -> list[str]:
         warnings: list[str] = []
         if self._spec4ml_module is None:
             base = "spec4ml_py unavailable; running sklearn fallback implementation."
-            if self._import_error:
-                warnings.append(f"{base} Import error: {self._import_error}")
-            else:
-                warnings.append(base)
+            warnings.append(f"{base} Import error: {self._import_error}" if self._import_error else base)
         return warnings

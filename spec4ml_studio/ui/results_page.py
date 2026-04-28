@@ -61,6 +61,18 @@ def render_results_page() -> None:
         if "manual_preprocessed_df" in st.session_state:
             c2.pyplot(plot_service.spectra_figure(st.session_state.manual_preprocessed_df, payload.config.spectral_start_index, vis_cfg))
 
+
+    if "search_result" in st.session_state and st.session_state.search_result.selected is not None:
+        sr = st.session_state.search_result.selected
+        st.markdown("### Selected TPOT/search pipeline")
+        st.write({
+            "preprocessing": sr.preprocessing_name,
+            "selected model": sr.top_model,
+            "validation score": sr.validation_score,
+            "evaluated pipelines": sr.n_evaluated_pipelines,
+            "training time (s)": sr.training_time_seconds,
+        })
+
     st.markdown("### Downloads")
     for artifact in result.artifacts:
         st.download_button(
@@ -69,3 +81,12 @@ def render_results_page() -> None:
             file_name=artifact.name,
             mime=artifact.mime_type,
         )
+    if "search_downloads" in st.session_state:
+        for artifact in st.session_state.search_downloads:
+            st.download_button(
+                label=f"Download {artifact.name}",
+                data=artifact.bytes_data,
+                file_name=artifact.name,
+                mime=artifact.mime_type,
+                key=f"results_{artifact.name}",
+            )

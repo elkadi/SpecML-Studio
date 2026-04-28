@@ -4,7 +4,14 @@ from abc import ABC, abstractmethod
 
 import pandas as pd
 
-from spec4ml_studio.domain.models import DatasetPayload, EvaluationRequest, FeatureImportanceRequest, ValidationReport
+from spec4ml_studio.domain.models import (
+    DatasetPayload,
+    EvaluationRequest,
+    FeatureImportanceRequest,
+    SearchRequest,
+    SearchCandidateResult,
+    ValidationReport,
+)
 from spec4ml_studio.domain.results import EvaluationResult, FeatureImportanceResult
 
 
@@ -33,6 +40,22 @@ class Spec4MLBackend(ABC):
 
     @abstractmethod
     def run_tpot_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def run_tpot_regression_search(self, request: SearchRequest, candidate_df: pd.DataFrame, candidate_name: str) -> SearchCandidateResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def run_tpot_classification_search(self, request: SearchRequest, candidate_df: pd.DataFrame, candidate_name: str) -> SearchCandidateResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def export_selected_pipeline(self, selected_result: SearchCandidateResult) -> str | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def serialize_selected_model(self, selected_result: SearchCandidateResult) -> bytes | None:
         raise NotImplementedError
 
     @abstractmethod

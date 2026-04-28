@@ -4,6 +4,7 @@ import streamlit as st
 
 from spec4ml_studio.adapters.factory import get_backend
 from spec4ml_studio.config import APP_TITLE
+from spec4ml_studio.services.automl_search_service import AutoMLSearchService
 from spec4ml_studio.services.data_validation_service import DataValidationService
 from spec4ml_studio.services.dataset_service import DatasetService
 from spec4ml_studio.services.demo_pipeline_service import DemoPipelineService
@@ -27,6 +28,8 @@ def _init_services() -> None:
         st.session_state.data_validation_service = DataValidationService(st.session_state.backend)
     if "evaluation_service" not in st.session_state:
         st.session_state.evaluation_service = EvaluationService(st.session_state.backend)
+    if "automl_search_service" not in st.session_state:
+        st.session_state.automl_search_service = AutoMLSearchService(st.session_state.backend)
     if "feature_importance_service" not in st.session_state:
         st.session_state.feature_importance_service = FeatureImportanceService(st.session_state.backend)
     if "plot_service" not in st.session_state:

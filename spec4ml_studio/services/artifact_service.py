@@ -6,7 +6,7 @@ from io import BytesIO
 import joblib
 import pandas as pd
 
-from spec4ml_studio.domain.models import PipelineSummary
+from spec4ml_studio.domain.models import PipelineSummary, SearchResult, SelectedPipelineSummary
 from spec4ml_studio.domain.results import ArtifactMetadata
 from spec4ml_studio.utils.io import dataframe_to_csv_bytes
 
@@ -34,10 +34,26 @@ class ArtifactService:
         }
         return ArtifactMetadata("selected_pipeline_summary.json", "application/json", json.dumps(payload, indent=2).encode("utf-8"))
 
-    def make_model_artifact(self, model_object) -> ArtifactMetadata | None:
+    def make_selected_pipeline_summary_artifact(self, summary: SelectedPipelineSummary) -> ArtifactMetadata:
+        payload = {
+            "candidate_name": summary.candidate_name,
+            "preprocessing_name": summary.preprocessing_name,
+            "selected_model": summary.selected_model,
+            "validation_score": summary.validation_score,
+            "model_info": summary.model_info,
+        }
+        return ArtifactMetadata("selected_tpot_pipeline_summary.json", "application/json", json.dumps(payload, indent=2).encode("utf-8"))
+
+    def make_search_results_artifact(self, df: pd.DataFrame) -> ArtifactMetadata:
+        return ArtifactMetadata("tpot_search_results.csv", "text/csv", dataframe_to_csv_bytes(df))
+
+    def make_model_artifact(self, model_object, name: str = "selected_model.joblib") -> ArtifactMetadata | None:
         try:
             buffer = BytesIO()
             joblib.dump(model_object, buffer)
-            return ArtifactMetadata("selected_model.joblib", "application/octet-stream", buffer.getvalue())
+            return ArtifactMetadata(name, "application/octet-stream", buffer.getvalue())
         except Exception:
             return None
+
+    def make_exported_pipeline_artifact(self, code: str) -> ArtifactMetadata:
+        return ArtifactMetadata("selected_tpot_pipeline.py", "text/x-python", code.encode("utf-8"))
