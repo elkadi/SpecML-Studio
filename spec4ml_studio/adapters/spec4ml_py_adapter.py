@@ -300,7 +300,10 @@ class Spec4MLPyBackend(Spec4MLBackend):
                 warnings=warnings,
             )
         except Exception as exc:
-            warnings.append(f"TPOT unavailable or failed ({exc}); using sklearn fallback search.")
+            if "No module named" in str(exc) and "tpot" in str(exc).lower():
+                warnings.append("TPOT AutoML is not installed in this deployment. Install requirements-full.txt locally to enable TPOT search.")
+            else:
+                warnings.append(f"TPOT unavailable or failed ({exc}); using sklearn fallback search.")
             return self._fallback_search(request, x, y, candidate_name, start, warnings, df)
 
     def _fallback_search(

@@ -10,5 +10,7 @@ venv/
 .coverage
 htmlcov/
 .streamlit/
+!.streamlit/
+!.streamlit/config.toml
 *.csv
 !sample_data/*.csv

@@ -2,6 +2,27 @@
 
 Spec4ML Studio is a Streamlit app for spectral data analysis with regression/classification evaluation, preprocessing, AutoML search, and downloadable artifacts.
 
+## Deployment reliability (Streamlit Community Cloud)
+- `runtime.txt` is at repository root and pinned to `python-3.11`.
+- Default cloud install uses `requirements.txt` (cloud-safe, faster install).
+- Heavy optional AutoML dependencies are in `requirements-full.txt`.
+- If TPOT is missing, the app still starts and shows:
+  - “TPOT AutoML is not installed in this deployment. Install requirements-full.txt locally to enable TPOT search.”
+
+## Requirements profiles
+### `requirements.txt` (Cloud-safe default)
+Core app + sklearn fallback stack.
+
+### `requirements-full.txt` (Local full AutoML)
+Includes:
+- TPOT
+- XGBoost
+
+Install full profile locally with:
+```bash
+pip install -r requirements-full.txt
+```
+
 ## Highlights
 - Numeric-column-name spectral start inference (R-compatible behavior).
 - Cleaning option to drop rows with missing/non-numeric spectral values.
@@ -22,8 +43,3 @@ Spec4ML Studio is a Streamlit app for spectral data analysis with regression/cla
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-## Streamlit Community Cloud notes
-- Runtime pinned with `runtime.txt`.
-- TPOT operations use conservative defaults (short runtime, small populations, limited jobs).
-- If TPOT is unavailable, sklearn fallback models are used with warnings.

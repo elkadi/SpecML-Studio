@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+
 import streamlit as st
 
 from spec4ml_studio.domain.models import EvaluationMode, SearchRequest, SelectedPipelineSummary, TaskType
@@ -12,7 +14,10 @@ def _run_standard_evaluation() -> None:
     evaluation_service = st.session_state.evaluation_service
     mode = st.selectbox("Evaluation mode", [EvaluationMode.LOOCV, EvaluationMode.EXTERNAL_TEST, EvaluationMode.ENSEMBLE, EvaluationMode.TPOT])
     if mode is EvaluationMode.TPOT:
-        st.warning("TPOT search can be slow on Streamlit Community Cloud. Conservative defaults are used.")
+        if importlib.util.find_spec("tpot") is None:
+            st.warning("TPOT AutoML is not installed in this deployment. Install requirements-full.txt locally to enable TPOT search.")
+        else:
+            st.warning("TPOT search can be slow on Streamlit Community Cloud. Conservative defaults are used.")
 
     if st.button("Run evaluation"):
         train_payload = st.session_state.train_payload
@@ -50,6 +55,9 @@ def _run_tpot_search_section() -> None:
     st.markdown("---")
     st.subheader("TPOT / Search workflow")
     st.caption("Functional reference: multi-preprocessing TPOT search with per-candidate progress and safe fallbacks.")
+
+    if importlib.util.find_spec("tpot") is None:
+        st.warning("TPOT AutoML is not installed in this deployment. Install requirements-full.txt locally to enable TPOT search.")
 
     search_service = st.session_state.automl_search_service
     backend = st.session_state.backend
