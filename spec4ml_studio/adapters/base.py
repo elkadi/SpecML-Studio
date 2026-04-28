@@ -32,5 +32,9 @@ class Spec4MLBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def run_tpot_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
+        raise NotImplementedError
+
+    @abstractmethod
     def run_feature_block_importance(self, request: FeatureImportanceRequest) -> FeatureImportanceResult:
         raise NotImplementedError

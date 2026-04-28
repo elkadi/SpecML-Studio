@@ -10,6 +10,7 @@ from spec4ml_studio.services.demo_pipeline_service import DemoPipelineService
 from spec4ml_studio.services.evaluation_service import EvaluationService
 from spec4ml_studio.services.feature_importance_service import FeatureImportanceService
 from spec4ml_studio.services.plot_service import PlotService
+from spec4ml_studio.services.preprocessing_service import PreprocessingService
 from spec4ml_studio.ui.data_page import render_data_page
 from spec4ml_studio.ui.evaluation_page import render_evaluation_page
 from spec4ml_studio.ui.feature_importance_page import render_feature_importance_page
@@ -30,6 +31,8 @@ def _init_services() -> None:
         st.session_state.feature_importance_service = FeatureImportanceService(st.session_state.backend)
     if "plot_service" not in st.session_state:
         st.session_state.plot_service = PlotService()
+    if "preprocessing_service" not in st.session_state:
+        st.session_state.preprocessing_service = PreprocessingService()
     if "demo_pipeline_service" not in st.session_state:
         st.session_state.demo_pipeline_service = DemoPipelineService()
 

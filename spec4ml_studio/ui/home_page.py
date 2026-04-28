@@ -7,12 +7,11 @@ def render_home_page() -> None:
     st.header("Welcome")
     st.markdown(
         """
-Spec4ML Studio is an MVP for spectral data evaluation workflows.
+Spec4ML Studio provides spectral workflows for both regression and classification.
 
-Use the **Data** page to upload data, configure columns, and validate quality.
-Use the **Evaluation** page to run LOOCV, external-test, or ensemble analysis.
-Use the **Feature Importance** page to inspect spectral block importance.
+1. **Data**: upload/clean data, infer spectral start index from numeric column names, and apply manual preprocessing.
+2. **Evaluation**: run LOOCV, external-test, ensemble, or TPOT search (if available).
+3. **Results**: inspect metrics, plots, selected pipeline summary, and download artifacts.
+4. **Feature Importance**: inspect block-level spectral importance.
         """
     )
-
-    st.info("Tip: Load a demo dataset from the Data page to get started quickly.")

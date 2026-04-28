@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
+
+from spec4ml_studio.domain.models import PipelineSummary, TaskType
 
 
 @dataclass(slots=True)
@@ -18,14 +21,24 @@ class ArtifactMetadata:
 
 
 @dataclass(slots=True)
+class ModelArtifact:
+    name: str
+    model_object: Any
+
+
+@dataclass(slots=True)
 class EvaluationResult:
     mode: str
+    task_type: TaskType
     metrics: pd.DataFrame
     predictions: PredictionTable
     artifacts: list[ArtifactMetadata]
+    pipeline_summary: PipelineSummary
     backend_used: str
     used_fallback: bool
     warnings: list[str]
+    confusion_matrix: pd.DataFrame | None = None
+    classification_report: pd.DataFrame | None = None
 
 
 @dataclass(slots=True)
