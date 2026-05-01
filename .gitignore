@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.streamlit/
+!.streamlit/
+!.streamlit/config.toml
+*.csv
+!sample_data/*.csv
