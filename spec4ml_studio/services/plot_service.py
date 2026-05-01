@@ -69,3 +69,34 @@ class PlotService:
             return True
         except ValueError:
             return False
+
+
+    def feature_importance_axis_plot(self, importance_df: pd.DataFrame):
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(importance_df["center_wavelength"], importance_df["importance"], width=(importance_df["end_wavelength"]-importance_df["start_wavelength"]).abs().fillna(1.0), alpha=0.7)
+        ax.set_xlabel("Wavelength / Wavenumber")
+        ax.set_ylabel("Importance")
+        ax.set_title("Block Importance on Spectral Axis")
+        return fig
+
+    def feature_importance_overlay_plot(self, dataset_df: pd.DataFrame, spectral_start_index: int, importance_df: pd.DataFrame):
+        fig, ax = plt.subplots(figsize=(9, 4))
+        spectral_cols = dataset_df.columns[spectral_start_index:]
+        x = []
+        for i, c in enumerate(spectral_cols):
+            try:
+                x.append(float(str(c)))
+            except ValueError:
+                x.append(float(i))
+        y = dataset_df.iloc[:, spectral_start_index:].apply(pd.to_numeric, errors="coerce").mean(axis=0).to_numpy()
+        ax.plot(x, y, color="black", linewidth=1.2, label="Mean spectrum")
+
+        max_imp = max(float(importance_df["importance"].max()), 1e-12)
+        for _, row in importance_df.iterrows():
+            alpha = 0.1 + 0.6 * (float(row["importance"]) / max_imp)
+            ax.axvspan(float(row["start_wavelength"]), float(row["end_wavelength"]), color="red", alpha=alpha)
+
+        ax.set_xlabel("Wavelength / Wavenumber")
+        ax.set_ylabel("Intensity")
+        ax.set_title("Important Spectral Regions Overlay")
+        return fig

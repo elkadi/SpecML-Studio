@@ -15,6 +15,15 @@ class TestSetSelection:
 
 
 class AutoMLSearchService:
+
+    @staticmethod
+    def search_preset_config(preset: str) -> dict[str, int]:
+        presets = {
+            "Quick cloud test": {"max_time_mins": 2, "generations": 2, "population_size": 8, "cv_folds": 3, "n_jobs": 1, "max_candidates": 1},
+            "Balanced": {"max_time_mins": 10, "generations": 5, "population_size": 20, "cv_folds": 5, "n_jobs": 1, "max_candidates": 3},
+            "Advanced/local": {"max_time_mins": 60, "generations": 20, "population_size": 50, "cv_folds": 5, "n_jobs": -1, "max_candidates": 0},
+        }
+        return presets.get(preset, presets["Balanced"]).copy()
     def __init__(self, backend: Spec4MLBackend) -> None:
         self._backend = backend
 

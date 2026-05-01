@@ -73,20 +73,43 @@ def render_data_page() -> None:
         task_override=task_type,
     )
 
+    proceed_with_warnings = st.checkbox("Proceed despite validation warnings (if dataset is usable)", value=False)
+
     if st.button("Validate and activate dataset"):
-        payload = dataset_service.build_payload(
-            dataframe=train_df,
-            source_name=st.session_state.get("train_source_name", "train.csv"),
-            selection=selection,
-            drop_invalid_spectral_rows=clean_rows,
-        )
-        report = validation_service.validate(payload)
-        st.session_state.train_payload = payload
-        st.session_state.validation_report = report
-        st.session_state.active_train_df = payload.dataframe
-        if payload.cleaning_report:
-            cr = payload.cleaning_report
-            st.info(f"Rows: original={cr.original_rows}, dropped={cr.dropped_rows}, remaining={cr.remaining_rows}")
+        try:
+            payload = dataset_service.build_payload(
+                dataframe=train_df,
+                source_name=st.session_state.get("train_source_name", "train.csv"),
+                selection=selection,
+                drop_invalid_spectral_rows=clean_rows,
+            )
+            report = validation_service.validate(payload)
+            st.session_state.validation_report = report
+
+            if payload.cleaning_report:
+                cr = payload.cleaning_report
+                st.info(f"Rows: original={cr.original_rows}, dropped={cr.dropped_rows}, remaining={cr.remaining_rows}")
+
+            if report.is_usable:
+                st.session_state.train_payload = payload
+                st.session_state.active_train_df = payload.dataframe
+                if report.warnings:
+                    st.warning("Dataset activated with warnings.")
+                else:
+                    st.success("Dataset activated.")
+            else:
+                if report.fatal_errors:
+                    st.error("Dataset cannot be activated.")
+                    for err in report.fatal_errors:
+                        st.error(err)
+                elif proceed_with_warnings:
+                    st.session_state.train_payload = payload
+                    st.session_state.active_train_df = payload.dataframe
+                    st.warning("Dataset activated with warnings by user acknowledgement.")
+                else:
+                    st.warning("Validation warnings present. Enable acknowledgement checkbox to proceed.")
+        except Exception as exc:
+            st.error(f"Dataset activation failed: {exc}")
 
     if "validation_report" in st.session_state:
         report = st.session_state.validation_report
@@ -98,8 +121,10 @@ def render_data_page() -> None:
             "target_is_numeric": report.target_is_numeric,
             "spectral_columns_numeric_ratio": report.spectral_columns_numeric_ratio,
         })
-        for issue in report.issues:
+        for issue in report.warnings:
             st.warning(issue)
+        for issue in report.fatal_errors:
+            st.error(issue)
 
     # manual preprocessing and spectra visualization
     if "train_payload" in st.session_state:
@@ -146,11 +171,22 @@ def render_data_page() -> None:
 
     if "test_original_df" in st.session_state and "train_payload" in st.session_state:
         if st.button("Apply same config to test set"):
-            st.session_state.test_payload = dataset_service.clone_config_to_new_dataframe(
-                payload=st.session_state.train_payload,
-                dataframe=st.session_state.test_original_df,
-                source_name=st.session_state.get("test_source_name", "test.csv"),
-                drop_invalid_spectral_rows=clean_rows,
-            )
+            try:
+                test_payload = dataset_service.clone_config_to_new_dataframe(
+                    payload=st.session_state.train_payload,
+                    dataframe=st.session_state.test_original_df,
+                    source_name=st.session_state.get("test_source_name", "test.csv"),
+                    drop_invalid_spectral_rows=clean_rows,
+                )
+                test_report = validation_service.validate(test_payload)
+                if test_report.is_usable:
+                    st.session_state.test_payload = test_payload
+                    st.success("External test dataset activated.")
+                else:
+                    st.error("External test dataset cannot be activated.")
+                    for err in test_report.fatal_errors:
+                        st.error(err)
+            except Exception as exc:
+                st.error(f"External test dataset activation failed: {exc}")
 
     st.caption(f"Spectral start index validation examples: {dataset_service.validate_numeric_column_name_inference_examples()}")

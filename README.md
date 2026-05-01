@@ -1,45 +1,69 @@
 # Spec4ML Studio
 
-Spec4ML Studio is a Streamlit app for spectral data analysis with regression/classification evaluation, preprocessing, AutoML search, and downloadable artifacts.
+Spec4ML Studio provides a Streamlit workflow for spectral ML: data validation/cleaning, preprocessing, evaluation, TPOT search, plotting, and downloads.
 
-## Deployment reliability (Streamlit Community Cloud)
-- `runtime.txt` is at repository root and pinned to `python-3.11`.
-- Default cloud install uses `requirements.txt` (cloud-safe, faster install).
-- Heavy optional AutoML dependencies are in `requirements-full.txt`.
-- If TPOT is missing, the app still starts and shows:
-  - “TPOT AutoML is not installed in this deployment. Install requirements-full.txt locally to enable TPOT search.”
+## Streamlit Cloud startup (important)
+Use **`cloud_app.py`** as the Streamlit Cloud entrypoint.
 
-## Requirements profiles
-### `requirements.txt` (Cloud-safe default)
-Core app + sklearn fallback stack.
+Why:
+- `cloud_app.py` is cloud-safe and lightweight.
+- It renders immediately and shows diagnostics even if heavy scientific dependencies fail.
+- Full app loading is user-triggered and wrapped with UI error reporting.
 
-### `requirements-full.txt` (Local full AutoML)
-Includes:
-- TPOT
-- XGBoost
+### Cloud entrypoint
+Set Streamlit Cloud **Main file path** to:
+```text
+cloud_app.py
+```
 
-Install full profile locally with:
+## Local runs
+### Cloud-safe shell locally
+```bash
+streamlit run cloud_app.py
+```
+
+### Full app locally
+```bash
+streamlit run app.py
+```
+
+## Dependency profiles
+### `requirements.txt` (cloud-safe default)
+- Fast install profile for deployment startup.
+- Keeps heavy optional AutoML dependencies out.
+
+### `requirements-full.txt` (local full AutoML)
+Includes TPOT and XGBoost.
+
 ```bash
 pip install -r requirements-full.txt
 ```
 
-## Highlights
-- Numeric-column-name spectral start inference (R-compatible behavior).
-- Cleaning option to drop rows with missing/non-numeric spectral values.
-- Automatic task inference (`regression` vs `classification`) with optional override.
-- Evaluation modes: LOOCV, external test, ensemble, TPOT search (with fallback when unavailable).
-- Manual preprocessing: StandardScaler, MinMaxScaler, Normalizer, Savitzky-Golay, first derivative, SNV.
-- TPOT/search workflow across multiple preprocessing candidates.
-- Selected pipeline summary + downloads (predictions, metrics, preprocessed spectra, model `.joblib`, pipeline summary JSON, exported pipeline code when available).
+If TPOT is missing, the app shows:
+> TPOT AutoML is not installed in this deployment. Install requirements-full.txt locally to enable TPOT search.
 
-## Architecture
-- **UI layer:** `spec4ml_studio/ui/*` (thin pages; no direct TPOT/spec4ml calls).
-- **Services layer:** dataset/validation/preprocessing/evaluation/plot/artifact/AutoML orchestration.
-- **Adapter layer:** backend integration and optional package handling (`spec4ml_py`, `tpot`) with fallback.
-- **Domain layer:** typed dataclasses and enums for datasets, evaluations, search requests/results.
+## Runtime
+- `runtime.txt` is pinned to `python-3.11` at repository root.
+- `.streamlit/config.toml` contains server/browser defaults for deployment reliability.
 
-## Run
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+## Validation and activation behavior
+- Validation is advisory unless fatal errors are detected.
+- Datasets with warnings can still be activated when usable.
+- Cleaning mode can coerce/drop invalid spectral rows and activates cleaned data when sufficient rows remain.
+
+## TPOT search intensity presets
+- Quick cloud test
+- Balanced
+- Advanced/local
+- Custom (wide ranges for local serious runs)
+
+## Feature importance spectral mapping
+- Block importance is mapped to real spectral labels when numeric column names are available.
+- Results include `start_wavelength`, `end_wavelength`, and `center_wavelength`.
+- Overlay view highlights important spectral regions on a representative mean spectrum.
+
+## Evaluation workflows
+- The Evaluation page has two clearly separated modes:
+  - **Standard evaluation** (LOOCV, External test, Ensemble)
+  - **AutoML / TPOT search**
+- TPOT remains optional and is not required for cloud startup.

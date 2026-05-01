@@ -20,6 +20,13 @@ class EvaluationMode(str, Enum):
     TPOT = "TPOT Search"
 
 
+class SearchIntensity(str, Enum):
+    QUICK_CLOUD = "Quick cloud test"
+    BALANCED = "Balanced"
+    ADVANCED_LOCAL = "Advanced/local"
+    CUSTOM = "Custom"
+
+
 @dataclass(slots=True)
 class DatasetConfig:
     sample_id_column: Optional[str]
@@ -63,7 +70,9 @@ class ValidationReport:
     duplicate_sample_ids: int
     target_is_numeric: bool
     spectral_columns_numeric_ratio: float
-    issues: list[str]
+    warnings: list[str]
+    fatal_errors: list[str]
+    is_usable: bool
 
 
 @dataclass(slots=True)
