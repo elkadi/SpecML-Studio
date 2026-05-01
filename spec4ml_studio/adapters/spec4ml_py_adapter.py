@@ -76,17 +76,17 @@ class Spec4MLPyBackend(Spec4MLBackend):
 
         df = dataset.dataframe
         cfg = dataset.config
-        issues: list[str] = []
+        warnings_list: list[str] = []
 
         duplicate_sample_ids = 0
         if cfg.sample_id_column and cfg.sample_id_column in df.columns:
             duplicate_sample_ids = int(df[cfg.sample_id_column].duplicated().sum())
             if duplicate_sample_ids > 0:
-                issues.append(f"Found {duplicate_sample_ids} duplicate sample IDs.")
+                warnings_list.append(f"Found {duplicate_sample_ids} duplicate sample IDs.")
 
         target_is_numeric = False
         if cfg.target_column not in df.columns:
-            issues.append(f"Target column '{cfg.target_column}' is missing.")
+            warnings_list.append(f"Target column '{cfg.target_column}' is missing.")
         else:
             target_series = pd.to_numeric(df[cfg.target_column], errors="coerce")
             target_is_numeric = target_series.notna().all()
@@ -97,11 +97,11 @@ class Spec4MLPyBackend(Spec4MLBackend):
             / max(len(spectral_df.columns), 1)
         )
         if numeric_ratio < 1.0:
-            issues.append("Some spectral columns contain missing or non-numeric values.")
+            warnings_list.append("Some spectral columns contain missing or non-numeric values.")
 
         missing_values = int(spectral_df.isna().sum().sum())
         if missing_values > 0:
-            issues.append(f"Spectral columns include {missing_values} missing values.")
+            warnings_list.append(f"Spectral columns include {missing_values} missing values.")
 
         return ValidationReport(
             row_count=len(df),
@@ -110,7 +110,9 @@ class Spec4MLPyBackend(Spec4MLBackend):
             duplicate_sample_ids=duplicate_sample_ids,
             target_is_numeric=target_is_numeric,
             spectral_columns_numeric_ratio=numeric_ratio,
-            issues=issues,
+            warnings=warnings_list,
+            fatal_errors=[],
+            is_usable=True,
         )
 
     def run_loocv_evaluation(self, request: EvaluationRequest) -> EvaluationResult:

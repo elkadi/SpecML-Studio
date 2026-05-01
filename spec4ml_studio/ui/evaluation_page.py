@@ -4,7 +4,7 @@ import importlib.util
 
 import streamlit as st
 
-from spec4ml_studio.domain.models import EvaluationMode, SearchRequest, SelectedPipelineSummary, TaskType
+from spec4ml_studio.domain.models import EvaluationMode, SearchIntensity, SearchRequest, SelectedPipelineSummary, TaskType
 from spec4ml_studio.domain.results import ArtifactMetadata
 from spec4ml_studio.services.artifact_service import ArtifactService
 from spec4ml_studio.utils.io import read_csv
@@ -12,13 +12,7 @@ from spec4ml_studio.utils.io import read_csv
 
 def _run_standard_evaluation() -> None:
     evaluation_service = st.session_state.evaluation_service
-    mode = st.selectbox("Evaluation mode", [EvaluationMode.LOOCV, EvaluationMode.EXTERNAL_TEST, EvaluationMode.ENSEMBLE, EvaluationMode.TPOT])
-    if mode is EvaluationMode.TPOT:
-        if importlib.util.find_spec("tpot") is None:
-            st.warning("TPOT AutoML is not installed in this deployment. Install requirements-full.txt locally to enable TPOT search.")
-        else:
-            st.warning("TPOT search can be slow on Streamlit Community Cloud. Conservative defaults are used.")
-
+    mode = st.selectbox("Evaluation mode", [EvaluationMode.LOOCV, EvaluationMode.EXTERNAL_TEST, EvaluationMode.ENSEMBLE])
     if st.button("Run evaluation"):
         train_payload = st.session_state.train_payload
         if "manual_preprocessed_df" in st.session_state:
@@ -80,12 +74,24 @@ def _run_tpot_search_section() -> None:
 
     st.caption(f"Default scoring for selected task type: {scoring_default}")
 
+    intensity = st.selectbox("Search intensity", [SearchIntensity.QUICK_CLOUD, SearchIntensity.BALANCED, SearchIntensity.ADVANCED_LOCAL, SearchIntensity.CUSTOM])
+    preset = search_service.search_preset_config(intensity.value) if intensity is not SearchIntensity.CUSTOM else None
+
     c1, c2, c3, c4 = st.columns(4)
-    max_time_mins = c1.number_input("max_time_mins", min_value=1, max_value=10, value=3)
-    generations = c2.number_input("generations", min_value=1, max_value=5, value=2)
-    population_size = c3.number_input("population_size", min_value=4, max_value=20, value=8)
-    cv_folds = c4.number_input("cv folds", min_value=2, max_value=5, value=3)
-    n_jobs = st.number_input("n_jobs", min_value=1, max_value=2, value=1)
+    if intensity is SearchIntensity.CUSTOM:
+        max_time_mins = c1.number_input("max_time_mins", min_value=1, max_value=240, value=10)
+        generations = c2.number_input("generations", min_value=1, max_value=100, value=5)
+        population_size = c3.number_input("population_size", min_value=4, max_value=200, value=20)
+        cv_folds = c4.number_input("cv folds", min_value=2, max_value=10, value=5)
+        n_jobs = st.number_input("n_jobs", min_value=-1, max_value=16, value=1)
+        max_candidates = st.number_input("max candidates", min_value=1, max_value=50, value=3)
+    else:
+        max_time_mins = c1.number_input("max_time_mins", min_value=1, max_value=240, value=int(preset["max_time_mins"]), disabled=True)
+        generations = c2.number_input("generations", min_value=1, max_value=100, value=int(preset["generations"]), disabled=True)
+        population_size = c3.number_input("population_size", min_value=4, max_value=200, value=int(preset["population_size"]), disabled=True)
+        cv_folds = c4.number_input("cv folds", min_value=2, max_value=10, value=int(preset["cv_folds"]), disabled=True)
+        n_jobs = st.number_input("n_jobs", min_value=-1, max_value=16, value=int(preset["n_jobs"]), disabled=True)
+        max_candidates = st.number_input("max candidates", min_value=1, max_value=50, value=(len(search_service.build_candidates(st.session_state.get("manual_preprocessed_df", payload.dataframe), {})) if preset["max_candidates"] == 0 else int(preset["max_candidates"])), disabled=True)
 
     source_mode = st.radio("Test sample set source", ["manual", "uploaded", "random"], horizontal=True)
     manual_test_ids = None
@@ -109,7 +115,17 @@ def _run_tpot_search_section() -> None:
 
     active_candidate = st.session_state.get("manual_preprocessed_df", payload.dataframe)
     candidates = search_service.build_candidates(active_candidate, uploaded_map)
-    st.write(f"Preprocessing candidates: {len(candidates)}")
+    if int(max_candidates) > 0:
+        candidates = candidates[: int(max_candidates)]
+    st.write(f"Preprocessing candidates selected: {len(candidates)}")
+    estimated = len(candidates) * int(max_time_mins)
+    st.info(f"Estimated maximum runtime: ~{estimated} minutes (candidates × max_time_mins).")
+    if intensity is SearchIntensity.ADVANCED_LOCAL:
+        st.warning("Advanced/local preset may be too heavy for Streamlit Cloud.")
+    if int(n_jobs) == -1:
+        st.warning("Using n_jobs=-1 online can cause resource contention.")
+    if estimated > 120:
+        st.warning("Large TPOT run estimated. Consider reducing candidates or search intensity.")
 
     if st.button("Run TPOT search across candidates"):
         test_sel = search_service.build_train_sample_selection(
@@ -213,5 +229,8 @@ def render_evaluation_page() -> None:
         st.info("Please configure data on Data page first.")
         return
 
-    _run_standard_evaluation()
-    _run_tpot_search_section()
+    workflow = st.radio("Workflow", ["Standard evaluation", "AutoML / TPOT search"], horizontal=True)
+    if workflow == "Standard evaluation":
+        _run_standard_evaluation()
+    else:
+        _run_tpot_search_section()
