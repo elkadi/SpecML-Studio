@@ -88,7 +88,7 @@ def render_data_page() -> None:
 
             if payload.cleaning_report:
                 cr = payload.cleaning_report
-                st.info(f"Rows: original={cr.original_rows}, dropped={cr.dropped_rows}, remaining={cr.remaining_rows}")
+                st.info(f"Rows: original={cr.original_rows}, dropped_spectral={cr.dropped_rows_spectral}, dropped_target={cr.dropped_rows_target}, dropped_total={cr.dropped_rows_total}, remaining={cr.remaining_rows}")
 
             if report.is_usable:
                 st.session_state.train_payload = payload

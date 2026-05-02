@@ -47,7 +47,9 @@ class DatasetSelection:
 @dataclass(slots=True)
 class CleaningReport:
     original_rows: int
-    dropped_rows: int
+    dropped_rows_spectral: int
+    dropped_rows_target: int
+    dropped_rows_total: int
     remaining_rows: int
     cleaning_applied: bool
 

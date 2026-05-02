@@ -162,13 +162,14 @@ def _run_tpot_search_section() -> None:
         for i, candidate in enumerate(candidates, start=1):
             with st.spinner(f"Processing candidate {i}/{total}: {candidate.name}"):
                 try:
+                    search_service.preflight_search_candidate(candidate.dataframe, target_col, int(spectral_idx), task_type)
                     if task_type is TaskType.REGRESSION:
                         cres = backend.run_tpot_regression_search(request, candidate.dataframe, candidate.name)
                     else:
                         cres = backend.run_tpot_classification_search(request, candidate.dataframe, candidate.name)
                     partial_results.append(cres)
                 except Exception as exc:
-                    warnings.append(f"Candidate {candidate.name} failed: {exc}")
+                    warnings.append(f"Candidate {candidate.name} failed preflight/search: {exc}")
             progress.progress(i / total, text=f"Processed {i}/{total} candidates")
 
         from spec4ml_studio.domain.models import SearchResult

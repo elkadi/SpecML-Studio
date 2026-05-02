@@ -12,6 +12,7 @@ class FeatureImportanceService:
         self._backend = backend
 
     def run(self, dataset: DatasetPayload, n_blocks: int) -> FeatureImportanceResult:
+        self._preflight(dataset)
         request = FeatureImportanceRequest(dataset=dataset, n_blocks=n_blocks)
         result = self._backend.run_feature_block_importance(request)
         mapped, warning = self._map_blocks_to_spectral_axis(dataset, result.importance_table)
@@ -40,3 +41,20 @@ class FeatureImportanceService:
         mapped["end_wavelength"] = mapped["end_col"].apply(lambda x: axis_vals[int(x)] if int(x) < len(axis_vals) else None)
         mapped["center_wavelength"] = (mapped["start_wavelength"] + mapped["end_wavelength"]) / 2.0
         return mapped, warning
+
+
+    @staticmethod
+    def _preflight(dataset: DatasetPayload) -> None:
+        df = dataset.dataframe
+        cfg = dataset.config
+        spectral = df.iloc[:, cfg.spectral_start_index:].apply(pd.to_numeric, errors="coerce")
+        if spectral.shape[1] == 0 or spectral.isna().any().any():
+            raise ValueError("Feature importance requires clean numeric spectral columns. Please enable cleaning.")
+        y = df[cfg.target_column]
+        if dataset.task_type.value == "regression":
+            if pd.to_numeric(y, errors="coerce").isna().any():
+                raise ValueError("Feature importance regression target contains invalid values. Please enable cleaning.")
+        else:
+            ys = y.astype(str).str.strip()
+            if y.isna().any() or (ys == "").any() or (ys.str.lower() == "nan").any() or ys.nunique() < 2:
+                raise ValueError("Feature importance classification target labels are invalid.")

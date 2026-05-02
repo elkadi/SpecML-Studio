@@ -16,6 +16,23 @@ class TestSetSelection:
 
 class AutoMLSearchService:
 
+
+    @staticmethod
+    def preflight_search_candidate(df: pd.DataFrame, target_column: str, spectral_start_index: int, task_type: TaskType) -> None:
+        x = df.iloc[:, spectral_start_index:].apply(pd.to_numeric, errors="coerce")
+        if x.shape[1] == 0:
+            raise ValueError("No spectral columns available for search candidate.")
+        if x.isna().any().any():
+            raise ValueError("Search candidate contains missing/non-numeric spectral values. Clean data first.")
+        y = df[target_column]
+        if task_type is TaskType.REGRESSION:
+            if pd.to_numeric(y, errors="coerce").isna().any():
+                raise ValueError("Regression target contains missing/non-numeric values.")
+        else:
+            ys = y.astype(str).str.strip()
+            if y.isna().any() or (ys == "").any() or (ys.str.lower() == "nan").any() or ys.nunique() < 2:
+                raise ValueError("Classification target labels are invalid or fewer than 2 classes.")
+
     @staticmethod
     def search_preset_config(preset: str) -> dict[str, int]:
         presets = {

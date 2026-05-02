@@ -45,3 +45,27 @@ If TPOT is missing, the app shows:
 ## Runtime
 - `runtime.txt` is pinned to `python-3.11` at repository root.
 - `.streamlit/config.toml` contains server/browser defaults for deployment reliability.
+
+## Validation and activation behavior
+- Validation is advisory unless fatal errors are detected.
+- Datasets with warnings can still be activated when usable.
+- Cleaning mode can coerce/drop invalid spectral rows and activates cleaned data when sufficient rows remain.
+
+## TPOT search intensity presets
+- Quick cloud test
+- Balanced
+- Advanced/local
+- Custom (wide ranges for local serious runs)
+
+## Feature importance spectral mapping
+- Block importance is mapped to real spectral labels when numeric column names are available.
+- Results include `start_wavelength`, `end_wavelength`, and `center_wavelength`.
+- Overlay view highlights important spectral regions on a representative mean spectrum.
+
+## Evaluation workflows
+- The Evaluation page has two clearly separated modes:
+  - **Standard evaluation** (LOOCV, External test, Ensemble)
+  - **AutoML / TPOT search**
+- TPOT remains optional and is not required for cloud startup.
+
+- Cleaning now handles both spectral columns and target column values to prevent NaN target evaluation failures.

@@ -48,7 +48,7 @@ class DatasetService:
             raise ValueError(f"Target column '{selection.target_column}' does not exist in dataframe.")
 
         task_type = self.infer_task_type(dataframe, selection.target_column, selection.task_override)
-        cleaned_df, cleaning_report = self._clean_if_requested(dataframe, selection.spectral_start_index, drop_invalid_spectral_rows)
+        cleaned_df, cleaning_report = self._clean_if_requested(dataframe, selection.spectral_start_index, drop_invalid_spectral_rows, selection.target_column, task_type)
 
         config = DatasetConfig(
             sample_id_column=selection.sample_id_column,
@@ -92,19 +92,39 @@ class DatasetService:
         return False
 
     @staticmethod
-    def _clean_if_requested(dataframe: pd.DataFrame, spectral_start_index: int, enabled: bool) -> tuple[pd.DataFrame, CleaningReport]:
+    def _clean_if_requested(
+        dataframe: pd.DataFrame,
+        spectral_start_index: int,
+        enabled: bool,
+        target_column: str,
+        task_type: TaskType,
+    ) -> tuple[pd.DataFrame, CleaningReport]:
         original_rows = len(dataframe)
         if not enabled:
-            return dataframe.copy(), CleaningReport(original_rows, 0, original_rows, cleaning_applied=False)
+            return dataframe.copy(), CleaningReport(original_rows, 0, 0, 0, original_rows, cleaning_applied=False)
 
         df = dataframe.copy()
         spectral_columns = list(df.columns[spectral_start_index:])
         for col in spectral_columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        cleaned = df.dropna(subset=spectral_columns).reset_index(drop=True)
-        dropped = original_rows - len(cleaned)
-        return cleaned, CleaningReport(original_rows, dropped, len(cleaned), cleaning_applied=True)
+        before_spec = len(df)
+        df = df.dropna(subset=spectral_columns)
+        dropped_spectral = before_spec - len(df)
+
+        before_target = len(df)
+        if task_type is TaskType.REGRESSION:
+            df[target_column] = pd.to_numeric(df[target_column], errors="coerce")
+            df = df.dropna(subset=[target_column])
+        else:
+            target_as_str = df[target_column].astype(str).str.strip()
+            valid = (~df[target_column].isna()) & (target_as_str != "") & (target_as_str.str.lower() != "nan")
+            df = df.loc[valid]
+        dropped_target = before_target - len(df)
+
+        cleaned = df.reset_index(drop=True)
+        dropped_total = original_rows - len(cleaned)
+        return cleaned, CleaningReport(original_rows, dropped_spectral, dropped_target, dropped_total, len(cleaned), cleaning_applied=True)
 
     @staticmethod
     def validate_numeric_column_name_inference_examples() -> dict[str, int | None]:
