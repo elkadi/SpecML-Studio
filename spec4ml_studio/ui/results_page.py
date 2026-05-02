@@ -36,8 +36,14 @@ def render_results_page() -> None:
     st.dataframe(result.metrics, use_container_width=True)
 
     st.markdown("### Predictions")
-    pred_df = result.predictions.dataframe
+    pred_df = result.predictions_used_for_metrics if result.predictions_used_for_metrics is not None else result.predictions.dataframe
     st.dataframe(pred_df.head(200), use_container_width=True)
+    if result.replicate_aggregation_report is not None:
+        st.info(f"Metrics calculated after replicate aggregation by {result.replicate_aggregation_report.grouping_column}.")
+        st.write({"n_groups": result.replicate_aggregation_report.n_groups, "min_replicates": result.replicate_aggregation_report.min_replicates, "median_replicates": result.replicate_aggregation_report.median_replicates, "max_replicates": result.replicate_aggregation_report.max_replicates})
+        with st.expander("Row-level predictions"):
+            if result.row_level_predictions is not None:
+                st.dataframe(result.row_level_predictions.head(200), use_container_width=True)
 
     figs = plot_service.task_plots(result.task_type, pred_df, result.confusion_matrix)
     cols = st.columns(max(1, len(figs)))

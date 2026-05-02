@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from spec4ml_studio.domain.models import DatasetSelection, SpectraVisualizationConfig, TaskType
+from spec4ml_studio.domain.models import DatasetSelection, ReplicateHandlingMode, SpectraVisualizationConfig, TaskType
 from spec4ml_studio.utils.io import read_csv
 
 
@@ -71,6 +71,8 @@ def render_data_page() -> None:
         grouping_column=None if group_col == "<none>" else group_col,
         spectral_start_index=int(spectral_idx),
         task_override=task_type,
+        replicate_mode=replicate_mode,
+        replicate_grouping_column=replicate_group_col,
     )
 
     proceed_with_warnings = st.checkbox("Proceed despite validation warnings (if dataset is usable)", value=False)
@@ -88,7 +90,7 @@ def render_data_page() -> None:
 
             if payload.cleaning_report:
                 cr = payload.cleaning_report
-                st.info(f"Rows: original={cr.original_rows}, dropped_spectral={cr.dropped_rows_spectral}, dropped_target={cr.dropped_rows_target}, dropped_total={cr.dropped_rows_total}, remaining={cr.remaining_rows}")
+                st.info(f"Rows: original={cr.original_rows}, dropped_spectral={cr.dropped_rows_spectral}, dropped_target={cr.dropped_rows_target}, dropped_both={cr.dropped_rows_both}, dropped_total={cr.dropped_rows_total}, remaining={cr.remaining_rows}")
 
             if report.is_usable:
                 st.session_state.train_payload = payload

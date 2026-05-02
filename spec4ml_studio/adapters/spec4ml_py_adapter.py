@@ -24,7 +24,7 @@ from sklearn.metrics import (
     r2_score,
     recall_score,
 )
-from sklearn.model_selection import KFold, LeaveOneOut
+from sklearn.model_selection import KFold, LeaveOneGroupOut, LeaveOneOut
 
 from spec4ml_studio.adapters.base import Spec4MLBackend
 from spec4ml_studio.domain.models import (
@@ -32,6 +32,8 @@ from spec4ml_studio.domain.models import (
     EvaluationRequest,
     FeatureImportanceRequest,
     PipelineSummary,
+    ReplicateAggregationReport,
+    ReplicateHandlingMode,
     SearchCandidateResult,
     SearchRequest,
     TaskType,
@@ -123,16 +125,29 @@ class Spec4MLPyBackend(Spec4MLBackend):
         y_pred: list[Any] = []
         x = data.x_train.to_numpy()
         y = data.y_train.to_numpy()
-        loo = LeaveOneOut()
-        for tr_idx, te_idx in loo.split(x):
+        group_series = self._get_group_series(request.dataset)
+        if request.dataset.config.replicate_config.mode is ReplicateHandlingMode.AVERAGE_PREDICTIONS_AFTER_MODELING and group_series is not None:
+            splitter = LeaveOneGroupOut()
+            split_iter = splitter.split(x, y, group_series.to_numpy())
+        else:
+            splitter = LeaveOneOut()
+            split_iter = splitter.split(x)
+        row_group_ids: list[str] = []
+        for tr_idx, te_idx in split_iter:
             fold_model = self._clone_model(model)
             fold_model.fit(x[tr_idx], y[tr_idx])
-            y_pred.append(fold_model.predict(x[te_idx])[0])
-            y_true.append(y[te_idx][0])
+            fold_preds = fold_model.predict(x[te_idx])
+            y_pred.extend(list(fold_preds))
+            y_true.extend(list(y[te_idx]))
+            if group_series is not None:
+                row_group_ids.extend(list(group_series.iloc[te_idx].astype(str)))
 
         trained = self._clone_model(model)
         trained.fit(data.x_train, data.y_train)
-        return self._build_result(request, np.array(y_true), np.array(y_pred), trained, request.mode)
+        row_df = pd.DataFrame({"y_true": y_true, "y_pred": y_pred})
+        if row_group_ids:
+            row_df["group_id"] = row_group_ids
+        return self._build_result(request, np.array(y_true), np.array(y_pred), trained, request.mode, row_level_df=row_df)
 
     def run_external_test_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
         if request.test_dataset is None:
@@ -141,14 +156,22 @@ class Spec4MLPyBackend(Spec4MLBackend):
         model = self._default_model(request.dataset.task_type)
         model.fit(data.x_train, data.y_train)
         preds = model.predict(data.x_test)
-        return self._build_result(request, data.y_test.to_numpy(), np.array(preds), model, request.mode)
+        row_df = pd.DataFrame({"y_true": data.y_test.to_numpy(), "y_pred": np.array(preds)})
+        gs = self._get_group_series(request.test_dataset)
+        if gs is not None:
+            row_df["group_id"] = gs.astype(str).to_numpy()
+        return self._build_result(request, data.y_test.to_numpy(), np.array(preds), model, request.mode, row_level_df=row_df)
 
     def run_ensemble_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
         data = self._to_xy(request.dataset)
         model = RandomForestRegressor(n_estimators=150, random_state=42) if request.dataset.task_type is TaskType.REGRESSION else RandomForestClassifier(n_estimators=150, random_state=42)
         model.fit(data.x_train, data.y_train)
         preds = model.predict(data.x_train)
-        return self._build_result(request, data.y_train.to_numpy(), np.array(preds), model, request.mode)
+        row_df = pd.DataFrame({"y_true": data.y_train.to_numpy(), "y_pred": np.array(preds)})
+        gs = self._get_group_series(request.dataset)
+        if gs is not None:
+            row_df["group_id"] = gs.astype(str).to_numpy()
+        return self._build_result(request, data.y_train.to_numpy(), np.array(preds), model, request.mode, row_level_df=row_df)
 
     def run_tpot_evaluation(self, request: EvaluationRequest) -> EvaluationResult:
         warnings = self._base_warnings()
@@ -370,22 +393,26 @@ class Spec4MLPyBackend(Spec4MLBackend):
         model,
         mode: EvaluationMode,
         extra_warnings: list[str] | None = None,
+        row_level_df: pd.DataFrame | None = None,
     ) -> EvaluationResult:
         warnings = extra_warnings if extra_warnings is not None else self._base_warnings()
+        if row_level_df is None:
+            row_level_df = pd.DataFrame({"y_true": y_true, "y_pred": y_pred})
+        metric_df, rep_report = self._prediction_table_for_metrics(request.dataset, row_level_df)
         if request.dataset.task_type is TaskType.REGRESSION:
             metrics_dict = {
-                "r2": float(r2_score(y_true, y_pred)),
-                "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
-                "mae": float(mean_absolute_error(y_true, y_pred)),
-                "correlation": float(np.corrcoef(y_true, y_pred)[0, 1]) if len(y_true) > 1 else 0.0,
+                "r2": float(r2_score(metric_df["y_true"], metric_df["y_pred"])),
+                "rmse": float(np.sqrt(mean_squared_error(metric_df["y_true"], metric_df["y_pred"]))),
+                "mae": float(mean_absolute_error(metric_df["y_true"], metric_df["y_pred"])),
+                "correlation": float(np.corrcoef(metric_df["y_true"], metric_df["y_pred"])[0, 1]) if len(metric_df) > 1 else 0.0,
             }
             metrics_df = pd.DataFrame({"metric": list(metrics_dict.keys()), "value": list(metrics_dict.values())})
-            pred_df = pd.DataFrame({"y_true": y_true, "y_pred": y_pred})
+            pred_df = metric_df.copy()
             confusion_df = None
             class_report_df = None
         else:
-            yt = pd.Series(y_true).astype(str)
-            yp = pd.Series(y_pred).astype(str)
+            yt = pd.Series(metric_df["y_true"]).astype(str)
+            yp = pd.Series(metric_df["y_pred"]).astype(str)
             labels = sorted(set(yt.unique()) | set(yp.unique()))
             metrics_dict = {
                 "accuracy": float(accuracy_score(yt, yp)),
@@ -395,7 +422,7 @@ class Spec4MLPyBackend(Spec4MLBackend):
                 "f1_macro": float(f1_score(yt, yp, average="macro", zero_division=0)),
             }
             metrics_df = pd.DataFrame({"metric": list(metrics_dict.keys()), "value": list(metrics_dict.values())})
-            pred_df = pd.DataFrame({"y_true": yt, "y_pred": yp})
+            pred_df = metric_df.copy()
             confusion_df = pd.DataFrame(confusion_matrix(yt, yp, labels=labels), index=labels, columns=labels)
             class_report_df = pd.DataFrame(classification_report(yt, yp, output_dict=True, zero_division=0)).transpose()
 
@@ -411,10 +438,11 @@ class Spec4MLPyBackend(Spec4MLBackend):
         )
 
         artifacts = [
-            self._artifact_service.make_predictions_artifact(pred_df),
+            self._artifact_service.make_predictions_artifact(row_level_df, "row_level_predictions.csv"),
+            self._artifact_service.make_predictions_artifact(pred_df, "aggregated_predictions.csv"),
+            self._artifact_service.make_preprocessed_spectra_artifact(request.dataset.dataframe),
             self._artifact_service.make_metrics_artifact(metrics_df),
             self._artifact_service.make_pipeline_summary_artifact(summary),
-            self._artifact_service.make_preprocessed_spectra_artifact(request.dataset.dataframe),
         ]
         model_artifact = self._artifact_service.make_model_artifact(model)
         if model_artifact is not None:
@@ -434,7 +462,36 @@ class Spec4MLPyBackend(Spec4MLBackend):
             warnings=warnings,
             confusion_matrix=confusion_df,
             classification_report=class_report_df,
+            row_level_predictions=row_level_df,
+            aggregated_predictions=pred_df,
+            predictions_used_for_metrics=pred_df,
+            replicate_aggregation_report=rep_report,
         )
+
+    def _get_group_series(self, payload) -> pd.Series | None:
+        cfg = payload.config.replicate_config
+        if cfg.mode is ReplicateHandlingMode.NONE:
+            return None
+        if not cfg.grouping_column or cfg.grouping_column not in payload.dataframe.columns:
+            return None
+        return payload.dataframe[cfg.grouping_column]
+
+    def _prediction_table_for_metrics(self, payload, row_df: pd.DataFrame) -> tuple[pd.DataFrame, ReplicateAggregationReport | None]:
+        gs = self._get_group_series(payload)
+        if gs is None or payload.config.replicate_config.mode is ReplicateHandlingMode.NONE or "group_id" not in row_df.columns:
+            return row_df, None
+        inconsistent = 0
+        if payload.task_type is TaskType.REGRESSION:
+            agg = row_df.groupby("group_id", as_index=False).agg(y_true=("y_true", "mean"), y_pred=("y_pred", "mean"), y_pred_std=("y_pred", "std"), n_replicates=("y_true", "size"))
+        else:
+            def _mode_label(s):
+                nonlocal inconsistent
+                if s.astype(str).nunique() > 1:
+                    inconsistent += 1
+                return s.astype(str).mode().iat[0]
+            agg = row_df.groupby("group_id", as_index=False).agg(y_true=("y_true", _mode_label), y_pred=("y_pred", _mode_label), n_replicates=("y_true", "size"))
+        rep = ReplicateAggregationReport(grouping_column=payload.config.replicate_config.grouping_column or "group_id", n_groups=int(agg.shape[0]), min_replicates=int(agg["n_replicates"].min()), median_replicates=float(agg["n_replicates"].median()), max_replicates=int(agg["n_replicates"].max()), inconsistent_label_groups=inconsistent, warnings=[])
+        return agg, rep
 
     @staticmethod
     def _default_model(task_type: TaskType):

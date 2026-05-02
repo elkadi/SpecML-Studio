@@ -27,12 +27,37 @@ class SearchIntensity(str, Enum):
     CUSTOM = "Custom"
 
 
+class ReplicateHandlingMode(str, Enum):
+    NONE = "Spectrum-level / no replicate handling"
+    AVERAGE_SPECTRA_BEFORE_MODELING = "Average spectra before modeling"
+    AVERAGE_PREDICTIONS_AFTER_MODELING = "Train on spectra, average predictions after modeling"
+
+
+@dataclass(slots=True)
+class ReplicateAggregationConfig:
+    mode: ReplicateHandlingMode = ReplicateHandlingMode.NONE
+    grouping_column: str | None = None
+    classification_label_strategy: str = "majority_vote"
+
+
+@dataclass(slots=True)
+class ReplicateAggregationReport:
+    grouping_column: str
+    n_groups: int
+    min_replicates: int
+    median_replicates: float
+    max_replicates: int
+    inconsistent_label_groups: int
+    warnings: list[str] = field(default_factory=list)
+
+
 @dataclass(slots=True)
 class DatasetConfig:
     sample_id_column: Optional[str]
     target_column: str
     grouping_column: Optional[str]
     spectral_start_index: int
+    replicate_config: ReplicateAggregationConfig = field(default_factory=ReplicateAggregationConfig)
 
 
 @dataclass(slots=True)
@@ -42,6 +67,8 @@ class DatasetSelection:
     grouping_column: Optional[str]
     spectral_start_index: int
     task_override: Optional[TaskType] = None
+    replicate_mode: ReplicateHandlingMode = ReplicateHandlingMode.NONE
+    replicate_grouping_column: str | None = None
 
 
 @dataclass(slots=True)
@@ -49,6 +76,7 @@ class CleaningReport:
     original_rows: int
     dropped_rows_spectral: int
     dropped_rows_target: int
+    dropped_rows_both: int
     dropped_rows_total: int
     remaining_rows: int
     cleaning_applied: bool

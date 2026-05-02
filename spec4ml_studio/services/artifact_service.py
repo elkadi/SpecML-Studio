@@ -15,8 +15,8 @@ class ArtifactService:
     def make_metrics_artifact(self, metrics: pd.DataFrame) -> ArtifactMetadata:
         return ArtifactMetadata("metrics.csv", "text/csv", dataframe_to_csv_bytes(metrics))
 
-    def make_predictions_artifact(self, predictions: pd.DataFrame) -> ArtifactMetadata:
-        return ArtifactMetadata("predictions.csv", "text/csv", dataframe_to_csv_bytes(predictions))
+    def make_predictions_artifact(self, predictions: pd.DataFrame, name: str = "predictions.csv") -> ArtifactMetadata:
+        return ArtifactMetadata(name, "text/csv", dataframe_to_csv_bytes(predictions))
 
     def make_preprocessed_spectra_artifact(self, dataframe: pd.DataFrame) -> ArtifactMetadata:
         return ArtifactMetadata("preprocessed_spectra.csv", "text/csv", dataframe_to_csv_bytes(dataframe))

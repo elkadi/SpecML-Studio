@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from spec4ml_studio.adapters.base import Spec4MLBackend
-from spec4ml_studio.domain.models import CleaningReport, DatasetConfig, DatasetPayload, DatasetSelection, TaskType
+from spec4ml_studio.domain.models import CleaningReport, DatasetConfig, DatasetPayload, DatasetSelection, ReplicateAggregationConfig, ReplicateAggregationReport, ReplicateHandlingMode, TaskType
 
 
 @dataclass(slots=True)
@@ -55,7 +55,13 @@ class DatasetService:
             target_column=selection.target_column,
             grouping_column=selection.grouping_column,
             spectral_start_index=selection.spectral_start_index,
+            replicate_config=ReplicateAggregationConfig(
+                mode=selection.replicate_mode,
+                grouping_column=selection.replicate_grouping_column,
+            ),
         )
+        if config.replicate_config.mode is ReplicateHandlingMode.AVERAGE_SPECTRA_BEFORE_MODELING:
+            cleaned_df, _ = self.average_replicate_spectra(cleaned_df, config, task_type)
         return DatasetPayload(
             dataframe=cleaned_df,
             original_dataframe=dataframe.copy(),
@@ -101,7 +107,7 @@ class DatasetService:
     ) -> tuple[pd.DataFrame, CleaningReport]:
         original_rows = len(dataframe)
         if not enabled:
-            return dataframe.copy(), CleaningReport(original_rows, 0, 0, 0, original_rows, cleaning_applied=False)
+            return dataframe.copy(), CleaningReport(original_rows, 0, 0, 0, 0, original_rows, cleaning_applied=False)
 
         df = dataframe.copy()
         spectral_columns = list(df.columns[spectral_start_index:])
@@ -111,7 +117,6 @@ class DatasetService:
         before_spec = len(df)
         df = df.dropna(subset=spectral_columns)
         dropped_spectral = before_spec - len(df)
-
         before_target = len(df)
         if task_type is TaskType.REGRESSION:
             df[target_column] = pd.to_numeric(df[target_column], errors="coerce")
@@ -121,10 +126,39 @@ class DatasetService:
             valid = (~df[target_column].isna()) & (target_as_str != "") & (target_as_str.str.lower() != "nan")
             df = df.loc[valid]
         dropped_target = before_target - len(df)
+        dropped_both = 0
 
         cleaned = df.reset_index(drop=True)
         dropped_total = original_rows - len(cleaned)
-        return cleaned, CleaningReport(original_rows, dropped_spectral, dropped_target, dropped_total, len(cleaned), cleaning_applied=True)
+        return cleaned, CleaningReport(original_rows, dropped_spectral, dropped_target, dropped_both, dropped_total, len(cleaned), cleaning_applied=True)
+
+    def average_replicate_spectra(self, dataframe: pd.DataFrame, config: DatasetConfig, task_type: TaskType) -> tuple[pd.DataFrame, ReplicateAggregationReport]:
+        grp_col = config.replicate_config.grouping_column
+        if not grp_col or grp_col not in dataframe.columns:
+            raise ValueError("Replicate grouping column is required for average-spectra mode.")
+        spectral_cols = list(dataframe.columns[config.spectral_start_index:])
+        df = dataframe.copy()
+        warnings: list[str] = []
+        inconsistent = 0
+        if task_type is TaskType.REGRESSION:
+            agg = {c: "mean" for c in spectral_cols}
+            agg[config.target_column] = "mean"
+        else:
+            def _majority(s):
+                nonlocal inconsistent
+                if s.astype(str).nunique() > 1:
+                    inconsistent += 1
+                return s.astype(str).mode().iat[0]
+            agg = {c: "mean" for c in spectral_cols}
+            agg[config.target_column] = _majority
+        avg_df = df.groupby(grp_col, as_index=False).agg(agg)
+        counts = df.groupby(grp_col).size().reset_index(name="n_replicates")
+        avg_df = avg_df.merge(counts, on=grp_col, how="left")
+        rep_sizes = counts["n_replicates"]
+        if (rep_sizes == 1).all():
+            warnings.append("All groups have single replicate.")
+        report = ReplicateAggregationReport(grp_col, int(counts.shape[0]), int(rep_sizes.min()), float(rep_sizes.median()), int(rep_sizes.max()), inconsistent, warnings)
+        return avg_df, report
 
     @staticmethod
     def validate_numeric_column_name_inference_examples() -> dict[str, int | None]:

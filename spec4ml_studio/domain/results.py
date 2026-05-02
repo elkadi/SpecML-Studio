@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from spec4ml_studio.domain.models import PipelineSummary, TaskType
+from spec4ml_studio.domain.models import PipelineSummary, ReplicateAggregationReport, TaskType
 
 
 @dataclass(slots=True)
@@ -39,6 +39,10 @@ class EvaluationResult:
     warnings: list[str]
     confusion_matrix: pd.DataFrame | None = None
     classification_report: pd.DataFrame | None = None
+    row_level_predictions: pd.DataFrame | None = None
+    aggregated_predictions: pd.DataFrame | None = None
+    predictions_used_for_metrics: pd.DataFrame | None = None
+    replicate_aggregation_report: ReplicateAggregationReport | None = None
 
 
 @dataclass(slots=True)
