@@ -11,6 +11,19 @@ def _task_selection(default_task: TaskType) -> TaskType:
     return option
 
 
+def _replicate_group_summary(df, col: str) -> None:
+    counts = df.groupby(col).size()
+    if counts.empty:
+        st.warning("No replicate groups found for selected grouping column.")
+        return
+    st.caption(
+        f"Replicate groups: {counts.shape[0]} | min={int(counts.min())} | "
+        f"median={float(counts.median()):.1f} | max={int(counts.max())}"
+    )
+    if int(counts.max()) == 1:
+        st.warning("All groups have one replicate; replicate aggregation will be equivalent to spectrum-level metrics.")
+
+
 def render_data_page() -> None:
     st.header("Data")
     dataset_service = st.session_state.dataset_service
@@ -65,10 +78,28 @@ def render_data_page() -> None:
     task_type = _task_selection(inferred_task)
     clean_rows = st.checkbox("Drop rows with missing or non-numeric spectral values", value=False)
 
+    replicate_label_to_mode = {
+        "Spectrum-level / no replicate handling": ReplicateHandlingMode.NONE,
+        "Average spectra before modeling": ReplicateHandlingMode.AVERAGE_SPECTRA_BEFORE_MODELING,
+        "Train on spectra, average predictions after modeling": ReplicateHandlingMode.AVERAGE_PREDICTIONS_AFTER_MODELING,
+    }
+    replicate_label = st.selectbox("Technical replicate handling", list(replicate_label_to_mode.keys()))
+    replicate_mode = replicate_label_to_mode[replicate_label]
+
+    sample_col_value = None if sample_col == "<none>" else sample_col
+    group_col_value = None if group_col == "<none>" else group_col
+    default_replicate_col = group_col_value or sample_col_value or columns[0]
+    replicate_group_col = st.selectbox(
+        "Replicate grouping column",
+        columns,
+        index=columns.index(default_replicate_col),
+    )
+    _replicate_group_summary(train_df, replicate_group_col)
+
     selection = DatasetSelection(
-        sample_id_column=None if sample_col == "<none>" else sample_col,
+        sample_id_column=sample_col_value,
         target_column=target_col,
-        grouping_column=None if group_col == "<none>" else group_col,
+        grouping_column=group_col_value,
         spectral_start_index=int(spectral_idx),
         task_override=task_type,
         replicate_mode=replicate_mode,
@@ -78,6 +109,9 @@ def render_data_page() -> None:
     proceed_with_warnings = st.checkbox("Proceed despite validation warnings (if dataset is usable)", value=False)
 
     if st.button("Validate and activate dataset"):
+        if replicate_mode is not ReplicateHandlingMode.NONE and (not replicate_group_col or replicate_group_col not in train_df.columns):
+            st.error("Replicate handling requires a valid grouping column.")
+            return
         try:
             payload = dataset_service.build_payload(
                 dataframe=train_df,
@@ -95,6 +129,13 @@ def render_data_page() -> None:
             if report.is_usable:
                 st.session_state.train_payload = payload
                 st.session_state.active_train_df = payload.dataframe
+                if replicate_mode is ReplicateHandlingMode.AVERAGE_SPECTRA_BEFORE_MODELING:
+                    st.caption(f"Technical replicate handling: Average spectra before modeling by {replicate_group_col}")
+                    st.info(f"Averaged modeling rows: {len(payload.dataframe)}")
+                elif replicate_mode is ReplicateHandlingMode.AVERAGE_PREDICTIONS_AFTER_MODELING:
+                    st.caption(f"Technical replicate handling: Average predictions after modeling by {replicate_group_col}")
+                else:
+                    st.caption("Technical replicate handling: Spectrum-level")
                 if report.warnings:
                     st.warning("Dataset activated with warnings.")
                 else:
