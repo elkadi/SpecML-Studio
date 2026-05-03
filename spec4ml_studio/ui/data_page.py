@@ -26,6 +26,7 @@ def _replicate_group_summary(df, col: str) -> None:
 
 def render_data_page() -> None:
     st.header("Data")
+    st.caption("Replicate UI build: 2026-05-02 technical replicate selector enabled")
     dataset_service = st.session_state.dataset_service
     validation_service = st.session_state.data_validation_service
     preprocessing_service = st.session_state.preprocessing_service
